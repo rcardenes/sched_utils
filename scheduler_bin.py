@@ -5,24 +5,34 @@ import heapq
 import logging
 import signal
 import time
+from itertools import count
 from multiprocessing import Process
 
 from .process import ProcessTask, Result
 
-DEFAULT_POOL_SIZE = 2
-TIMEOUT=10
+DEFAULT_POOL_SIZE = 5
+DEFAULT_TIMEOUT = 10
+
+task_counter = count()
+job_counter = count()
 
 @dataclasses.dataclass(order=True)
 class Task:
     priority: int
     runtime: float=dataclasses.field(compare=False)
+    sequence: int=dataclasses.field(compare=False,
+                                    default_factory=functools.partial(next, task_counter))
+
+    def __repr__(self):
+        return f"Task-{self.sequence} (prio={self.priority}, rtime={self.runtime})"
 
 @dataclasses.dataclass(order=True)
 class Job:
     priority: int
-    sequence: int=dataclasses.field(compare=False)
     runtime: float=dataclasses.field(compare=False)
     process: ProcessTask=dataclasses.field(compare=False)
+    sequence: int=dataclasses.field(compare=False,
+                                    default_factory=functools.partial(next, job_counter))
 
     def __repr__(self):
         return f"Job-{self.sequence} (prio={self.priority}, rtime={self.runtime})"
@@ -48,11 +58,11 @@ class PriorityRunner:
         (and its associated process terminated) to make room for the new
         task.
     """
-    def __init__(self, size):
+    def __init__(self, size, timeout=None):
         self.max_jobs = size
         self.jobs = []
         self.callbacks = []
-        self.sequence = 0
+        self.timeout = timeout
 
     def add_done_callback(self, callback):
         """
@@ -74,14 +84,14 @@ class PriorityRunner:
             # don't need to do anything else about them.
             # The others need a bit more of work
             if res == Result.TIMEOUT:
-                logging.warning(f"Task {job} timed out!")
+                logging.warning(f"  - Task {job} timed out!")
             else:
-                logging.info(f"Task {job} is done")
+                logging.info(f"  - Task {job} is done")
 
             try:
                 del self.jobs[self.jobs.index(job)]
             except ValueError:
-                logging.warning(f"Job {job} was not in the heap any longer!")
+                logging.warning(f"  - Job {job} was not in the heap any longer!")
 
             # Notify that we're ready to queue something new
             for callback in self.callbacks:
@@ -93,14 +103,12 @@ class PriorityRunner:
 
         Only internal use.
         """
-        self.sequence += 1
-        proc = Process(name=f'job-{self.sequence}',
-                       target=sleep_for, args=(runtime,))
+        proc = Process(target=sleep_for, args=(runtime,))
         ptask = ProcessTask(proc)
-        job = Job(priority, self.sequence, runtime, ptask)
+        job = Job(priority, runtime, ptask)
+        proc.name = f'Job-{job.sequence}'
         ptask.add_done_callback(functools.partial(self.terminated_job, job))
-        # Not running with a timeout to keep things simple
-        ptask.start(timeout=TIMEOUT)
+        ptask.start(timeout=self.timeout)
 
         return job
 
@@ -113,7 +121,7 @@ class PriorityRunner:
             # Assume that lower priority number means higher priority
             lowest = max(self.jobs)
             if lowest.priority > priority:
-                logging.debug(f"Evicting job {lowest}")
+                logging.debug(f"  - Evicting job {lowest}")
                 lowest.process.terminate()
                 del self.jobs[self.jobs.index(lowest)]
         except ValueError:
@@ -152,32 +160,23 @@ class SchedulerBin:
     Initialized with an optional "pool size" defining the maximum amount
     of concurrent processes that will be handled by the Bin.
     """
-    def __init__(self, pool_size=DEFAULT_POOL_SIZE):
+    def __init__(self, pool_size=DEFAULT_POOL_SIZE, timeout=DEFAULT_TIMEOUT):
         self.pending_tasks = []
         self.queue = asyncio.Queue()
         self.accepting = True
 
-        prun = PriorityRunner(pool_size)
+        prun = PriorityRunner(pool_size, timeout=timeout)
         prun.add_done_callback(self._schedule_pending)
         self.runner = prun
 
-    async def run(self):
-        "Task running the scheduler"
-        while True:
-            (priority, running_time) = await self.queue.get()
-            if self.accepting:
-                self.schedule_or_queue(Task(priority, running_time))
-            else:
-                break
-
-    def schedule_or_queue(self, task):
+    def schedule(self, task):
         """
         Attempts scheduling a task. In case it's not possible right now,
         because other higher priority tasks are holding all the available
         slots, the task will be queued for later scheduling.
         """
         if not self.runner.schedule(task.priority, task.runtime):
-            logging.debug("Had to queue the task, because it can't be scheduled")
+            logging.debug("  - Had to queue the task, because it can't be scheduled")
             heapq.heappush(self.pending_tasks, task)
 
     def _schedule_pending(self):
@@ -190,7 +189,7 @@ class SchedulerBin:
         """
         if self.pending_tasks:
             task = heapq.heappop(self.pending_tasks)
-            logging.debug(f"Scheduling queued: {task}")
+            logging.debug(f"  - Scheduling pending: {task}, {len(self.pending_tasks)} left")
             self.runner.schedule(task.priority, task.runtime)
 
     def shutdown(self):

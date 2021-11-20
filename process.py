@@ -113,7 +113,6 @@ class ProcessTask:
             await asyncio.get_event_loop().run_in_executor(None, self.process.join)
         except asyncio.CancelledError:
             self.process.terminate()
-            logging.error(f"Task {self.process.name} cancelled while still running")
         finally:
             self.running_task = None
             if self.result is None:
