@@ -5,7 +5,7 @@ In includes both an async-friendly wrapper over `multiprocessing.Process`, and
 a sample scheduler implementation.
 
 # Tests
-To be run as `python -m schedutils.test_module`.
+To be run as `python -m scheduler.<test_script>`, where `<test_script>` is one of:
 
 * `test_process` contains several functions
 testing and showcasing the functionality of the low-level `process` module.
