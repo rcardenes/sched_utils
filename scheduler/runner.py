@@ -96,7 +96,7 @@ class PriorityRunner:
             # Assume that lower priority number means higher priority
             lowest = max(self.jobs)
             if lowest.priority > priority:
-                logging.debug(f"  - Evicting job {lowest}")
+                logging.warning(f"  - Evicting job {lowest}")
                 lowest.process.terminate()
                 del self.jobs[self.jobs.index(lowest)]
         except ValueError:
@@ -110,7 +110,7 @@ class PriorityRunner:
         Returns True if the task was successfully scheduled,
         False otherwise.
         """
-        if len(self.jobs) == self.max_jobs:
+        if len(self.jobs) >= self.max_jobs:
             self.maybe_evict(priority)
         if len(self.jobs) < self.max_jobs:
             self.jobs.append(self._run_job(process, priority, timeout))

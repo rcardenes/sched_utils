@@ -2,54 +2,61 @@
 
 import argparse
 import asyncio
+import json
 import logging
 import signal
-from random import randint
+import websockets
 
 from .scheduler_bin import DEFAULT_TIMEOUT, DEFAULT_POOL_SIZE
 from .scheduler_bin import SchedulerBin, TaskDescription
 from .sleeper import Sleeper
+from . import bus
 
 DEFAULT_PERIOD = 5
 
-def get_new_task(timeout):
-    return TaskDescription(priority=randint(0, 10),
-                           timeout=timeout,
-                           target=Sleeper(randint(3, 15)))
+class SchedulerManager:
+    def __init__(self):
+        self.bins = []
+
+    def add_bin(self, new_bin):
+        self.bins.append(new_bin)
+
+    def handle(self, task):
+        for a_bin in self.bins:
+            if a_bin.accepts(task):
+                logging.info(f"Scheduling task: {task}")
+                a_bin.schedule(task)
+                break
+        else:
+            logging.warning(f"Rejected task: {task}")
+
+def get_configured_manager():
+    mng = SchedulerManager()
+    mng.add_bin(SchedulerBin(args.size))
+
+    return mng
 
 async def main(args):
-    done = asyncio.Event()
+    manager = get_configured_manager()
 
-    the_bin = SchedulerBin(args.size)
-
-    def shutdown():
-        done.set()
-        the_bin.shutdown()
-        asyncio.get_event_loop().stop()
-
-    asyncio.get_event_loop().add_signal_handler(signal.SIGINT, shutdown)
-
-    while not done.is_set():
-        task = get_new_task(args.timeout)
-        logging.info(f"Scheduling a job for {task}")
-        the_bin.schedule(task)
-        await asyncio.sleep(args.period)
+    async with websockets.connect('ws://localhost:8101') as websocket:
+        # Register with the bus, letting it know that we'll be handling stuff
+        await websocket.send(bus.create_message('register', type='scheduler'))
+        async for message in websocket:
+            msg = json.loads(message)
+            task = TaskDescription(priority=msg['priority'],
+                                   timeout=args.timeout,
+                                   target=Sleeper(msg['runtime']))
+            manager.handle(task)
 
 def set_logging():
-    logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)
-    handler = logging.StreamHandler()
-    handler.setLevel(logging.DEBUG)
-    fmt = logging.Formatter("%(asctime)s: %(message)s")
-    handler.setFormatter(fmt)
-    logger.addHandler(handler)
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s: %(message)s")
 
 def parse_cmdline():
     parser = argparse.ArgumentParser()
     parser.add_argument('-s', dest='size', type=int, default=DEFAULT_POOL_SIZE,
             help=f"maximum number of concurrent tasks. Default: {DEFAULT_POOL_SIZE}")
-    parser.add_argument('-p', dest='period', type=float, default=DEFAULT_PERIOD,
-            help=f"period between scheduling new jobs. Default: {DEFAULT_PERIOD}s")
     parser.add_argument('-t', dest='timeout', type=float, default=DEFAULT_TIMEOUT,
             help=f"timeout for the jobs. Default: {DEFAULT_TIMEOUT}s")
 

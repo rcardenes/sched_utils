@@ -11,11 +11,11 @@ from .runner import PriorityRunner
 DEFAULT_POOL_SIZE = 5
 DEFAULT_TIMEOUT = 10
 
-@dataclasses.dataclass
+@dataclasses.dataclass(order=True)
 class TaskDescription:
     priority: int
     timeout: float
-    target: callable
+    target: callable=dataclasses.field(compare=False)
 
     def __repr__(self):
         return f"{self.target} <- {{prio={self.priority}, timeout={self.timeout}}}"
@@ -48,7 +48,7 @@ class SchedulerBin:
         slots, the task will be queued for later scheduling.
         """
         if not self._schedule_with_runner(task):
-            logging.debug("  - Had to queue the task, because it can't be scheduled")
+            logging.info("  - Had to queue the task, because it can't be scheduled")
             heapq.heappush(self.pending_tasks, task)
 
     def _schedule_pending(self):
@@ -61,7 +61,7 @@ class SchedulerBin:
         """
         if self.pending_tasks:
             task = heapq.heappop(self.pending_tasks)
-            logging.debug(f"  - Scheduling pending: {task}, {len(self.pending_tasks)} left")
+            logging.info(f"  - Scheduling pending: {task}, {len(self.pending_tasks)} left")
             self._schedule_with_runner(task)
 
     def shutdown(self):
@@ -70,3 +70,6 @@ class SchedulerBin:
         """
         self.accepting = False
         self.runner.terminate_all()
+
+    def accepts(self, task):
+        return True
