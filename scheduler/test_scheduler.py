@@ -32,6 +32,10 @@ class SchedulerManager:
         else:
             logging.warning(f"Rejected task: {task}")
 
+    async def shutdown_all(self):
+        for a_bin in self.bins:
+            a_bin.shutdown()
+
 def get_configured_manager():
     mng = SchedulerManager()
     prun = PriorityRunner(args.size)
@@ -39,10 +43,19 @@ def get_configured_manager():
 
     return mng
 
+def terminate(manager, websocket):
+    async def terminate_impl():
+        await websocket.close()
+        await manager.shutdown_all()
+    asyncio.create_task(terminate_impl())
+
 async def main(args):
     manager = get_configured_manager()
+    term_signals = signal.SIGINT, signal.SIGTERM
 
     async with websockets.connect('ws://localhost:8101') as websocket:
+        for s in term_signals:
+            asyncio.get_event_loop().add_signal_handler(s, terminate, manager, websocket)
         # Register with the bus, letting it know that we'll be handling stuff
         await websocket.send(bus.create_message('register', type='scheduler'))
         async for message in websocket:
@@ -52,12 +65,15 @@ async def main(args):
                                    target=Sleeper(msg['runtime']))
             manager.handle(task)
 
-def set_logging():
-    logging.basicConfig(level=logging.INFO,
+def set_logging(debug):
+    logging.basicConfig(level=logging.INFO if not debug else logging.DEBUG,
                         format="%(asctime)s: %(message)s")
+    logging.getLogger('websockets.client').setLevel(logging.INFO)
 
 def parse_cmdline():
     parser = argparse.ArgumentParser()
+    parser.add_argument('-d', dest='debug', action='store_true',
+            help="enables debugging output")
     parser.add_argument('-s', dest='size', type=int, default=DEFAULT_POOL_SIZE,
             help=f"maximum number of concurrent tasks. Default: {DEFAULT_POOL_SIZE}")
     parser.add_argument('-t', dest='timeout', type=float, default=DEFAULT_TIMEOUT,
@@ -66,8 +82,8 @@ def parse_cmdline():
     return parser.parse_args()
 
 if __name__ == '__main__':
-    set_logging()
     args = parse_cmdline()
+    set_logging(args.debug)
     try:
         asyncio.run(main(args))
     except RuntimeError:
