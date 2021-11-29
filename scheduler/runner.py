@@ -123,6 +123,7 @@ class PriorityRunner:
         Ends all running processes.
         """
         for job in self.jobs:
+            logging.debug(f"> Terminating {job}")
             job.process.terminate()
 
         self.jobs = []

@@ -7,12 +7,14 @@ import logging
 import signal
 import websockets
 
-from .scheduler_bin import DEFAULT_TIMEOUT, DEFAULT_POOL_SIZE
+from .runner import PriorityRunner
 from .scheduler_bin import SchedulerBin, TaskDescription
 from .sleeper import Sleeper
 from . import bus
 
 DEFAULT_PERIOD = 5
+DEFAULT_POOL_SIZE = 5
+DEFAULT_TIMEOUT = 10
 
 class SchedulerManager:
     def __init__(self):
@@ -32,7 +34,8 @@ class SchedulerManager:
 
 def get_configured_manager():
     mng = SchedulerManager()
-    mng.add_bin(SchedulerBin(args.size))
+    prun = PriorityRunner(args.size)
+    mng.add_bin(SchedulerBin(prun))
 
     return mng
 

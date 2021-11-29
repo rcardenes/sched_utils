@@ -5,12 +5,6 @@ import dataclasses
 import types
 from multiprocessing import Process
 
-# from .runner import Task, PriorityRunner
-from .runner import PriorityRunner
-
-DEFAULT_POOL_SIZE = 5
-DEFAULT_TIMEOUT = 10
-
 @dataclasses.dataclass(order=True)
 class TaskDescription:
     priority: int
@@ -28,14 +22,11 @@ class SchedulerBin:
     Initialized with an optional "pool size" defining the maximum amount
     of concurrent processes that will be handled by the Bin.
     """
-    def __init__(self, pool_size=DEFAULT_POOL_SIZE):
+    def __init__(self, runner):
         self.pending_tasks = []
-        self.queue = asyncio.Queue()
         self.accepting = True
-
-        prun = PriorityRunner(pool_size)
-        prun.add_done_callback(self._schedule_pending)
-        self.runner = prun
+        runner.add_done_callback(self._schedule_pending)
+        self.runner = runner
 
     def _schedule_with_runner(self, task):
         return self.runner.schedule(Process(target=task.target),
